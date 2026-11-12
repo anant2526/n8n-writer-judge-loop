@@ -1,0 +1,342 @@
+{
+  "name": "Writer-Judge Loop",
+  "nodes": [
+    {
+      "id": "a1b2c3d4-0001-4000-8000-000000000001",
+      "name": "Manual Trigger",
+      "type": "n8n-nodes-base.manualTrigger",
+      "typeVersion": 1,
+      "position": [
+        0,
+        300
+      ],
+      "parameters": {}
+    },
+    {
+      "id": "a1b2c3d4-0002-4000-8000-000000000002",
+      "name": "Task",
+      "type": "n8n-nodes-base.set",
+      "typeVersion": 3.4,
+      "position": [
+        220,
+        300
+      ],
+      "parameters": {
+        "assignments": {
+          "assignments": [
+            {
+              "id": "f-task",
+              "name": "task",
+              "value": "Explain what a vector database is to a first-year engineering student in about 100 words.",
+              "type": "string"
+            },
+            {
+              "id": "f-draft",
+              "name": "draft",
+              "value": "",
+              "type": "string"
+            },
+            {
+              "id": "f-feedback",
+              "name": "feedback",
+              "value": "",
+              "type": "string"
+            }
+          ]
+        },
+        "options": {}
+      }
+    },
+    {
+      "id": "a1b2c3d4-0003-4000-8000-000000000003",
+      "name": "Writer Agent",
+      "type": "@n8n/n8n-nodes-langchain.chainLlm",
+      "typeVersion": 1.5,
+      "position": [
+        460,
+        300
+      ],
+      "parameters": {
+        "promptType": "define",
+        "text": "=Task: {{ $json.task }}\n{{ $json.feedback\n  ? \"Your previous draft:\\n\" + $json.draft\n    + \"\\n\\nJudge feedback: \" + $json.feedback\n    + \"\\n\\nRewrite the draft to fix the feedback.\"\n  : \"Write the first draft.\" }}",
+        "messages": {
+          "messageValues": [
+            {
+              "message": "You are a Writer agent. Output only the final text, no preamble."
+            }
+          ]
+        }
+      }
+    },
+    {
+      "id": "a1b2c3d4-0004-4000-8000-000000000004",
+      "name": "Groq Chat Model",
+      "type": "@n8n/n8n-nodes-langchain.lmChatGroq",
+      "typeVersion": 1,
+      "position": [
+        460,
+        520
+      ],
+      "parameters": {
+        "model": "llama-3.1-8b-instant",
+        "options": {
+          "temperature": 0.7
+        }
+      },
+      "credentials": {
+        "groqApi": {
+          "id": "",
+          "name": "Groq account"
+        }
+      }
+    },
+    {
+      "id": "a1b2c3d4-0005-4000-8000-000000000005",
+      "name": "Judge Agent",
+      "type": "@n8n/n8n-nodes-langchain.chainLlm",
+      "typeVersion": 1.5,
+      "position": [
+        800,
+        300
+      ],
+      "parameters": {
+        "promptType": "define",
+        "text": "=Task given to the writer: {{ $('Task').first().json.task }}\n\nDraft to evaluate:\n{{ $json.text }}\n\nScore each criterion from 1 to 10:\n- accuracy: the facts are correct\n- clarity: a first-year student can follow it\n- conciseness: about 100 words, no filler\n\nReturn ONLY this JSON:\n{\"accuracy\": 0, \"clarity\": 0, \"conciseness\": 0,\n \"feedback\": \"one specific sentence on what to improve\"}",
+        "messages": {
+          "messageValues": [
+            {
+              "message": "You are a strict evaluator. Reply with JSON only, no markdown."
+            }
+          ]
+        }
+      }
+    },
+    {
+      "id": "a1b2c3d4-0006-4000-8000-000000000006",
+      "name": "OpenRouter Chat Model",
+      "type": "@n8n/n8n-nodes-langchain.lmChatOpenRouter",
+      "typeVersion": 1,
+      "position": [
+        800,
+        520
+      ],
+      "parameters": {
+        "model": "google/gemma-3-27b-it:free",
+        "options": {
+          "temperature": 0
+        }
+      },
+      "credentials": {
+        "openRouterApi": {
+          "id": "",
+          "name": "OpenRouter account"
+        }
+      }
+    },
+    {
+      "id": "a1b2c3d4-0007-4000-8000-000000000007",
+      "name": "Parse Judge",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        1120,
+        300
+      ],
+      "parameters": {
+        "mode": "runOnceForAllItems",
+        "jsCode": "const raw = $input.first().json.text;\nlet j;\ntry {\n  j = JSON.parse(raw.match(/\\{[\\s\\S]*\\}/)[0]);\n} catch (e) {\n  j = { accuracy: 0, clarity: 0, conciseness: 0,\n        feedback: \"Judge returned invalid JSON\" };\n}\n\nconst score = Math.round(\n  (Number(j.accuracy) + Number(j.clarity) + Number(j.conciseness)) / 3 * 10) / 10;\n\nreturn [{ json: {\n  task: $('Task').first().json.task,\n  draft: $('Writer Agent').first().json.text,\n  feedback: j.feedback,\n  score: score,\n  attempt: $runIndex + 1\n}}];"
+      }
+    },
+    {
+      "id": "a1b2c3d4-0008-4000-8000-000000000008",
+      "name": "Pass?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.2,
+      "position": [
+        1340,
+        300
+      ],
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "loose",
+            "version": 2
+          },
+          "conditions": [
+            {
+              "id": "c-pass",
+              "leftValue": "={{ $json.score >= 8 || $json.attempt >= 3 }}",
+              "rightValue": "",
+              "operator": {
+                "type": "boolean",
+                "operation": "true",
+                "singleValue": true
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "looseTypeValidation": true,
+        "options": {}
+      }
+    },
+    {
+      "id": "a1b2c3d4-0009-4000-8000-000000000009",
+      "name": "Final Result",
+      "type": "n8n-nodes-base.set",
+      "typeVersion": 3.4,
+      "position": [
+        1580,
+        200
+      ],
+      "parameters": {
+        "assignments": {
+          "assignments": [
+            {
+              "id": "r-text",
+              "name": "final_text",
+              "value": "={{ $json.draft }}",
+              "type": "string"
+            },
+            {
+              "id": "r-score",
+              "name": "judge_score",
+              "value": "={{ $json.score }}",
+              "type": "number"
+            },
+            {
+              "id": "r-att",
+              "name": "attempts",
+              "value": "={{ $json.attempt }}",
+              "type": "number"
+            }
+          ]
+        },
+        "options": {}
+      }
+    },
+    {
+      "id": "a1b2c3d4-0010-4000-8000-000000000010",
+      "name": "Sticky Note",
+      "type": "n8n-nodes-base.stickyNote",
+      "typeVersion": 1,
+      "position": [
+        1300,
+        480
+      ],
+      "parameters": {
+        "width": 380,
+        "height": 160,
+        "content": "## Circuit breaker\n`attempt >= 3` stops runaway loops. Without it a harsh judge can loop forever and burn API quota.\n\nFalse branch → back into **Writer Agent** with the judge's feedback."
+      }
+    }
+  ],
+  "connections": {
+    "Manual Trigger": {
+      "main": [
+        [
+          {
+            "node": "Task",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Task": {
+      "main": [
+        [
+          {
+            "node": "Writer Agent",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Writer Agent": {
+      "main": [
+        [
+          {
+            "node": "Judge Agent",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Groq Chat Model": {
+      "ai_languageModel": [
+        [
+          {
+            "node": "Writer Agent",
+            "type": "ai_languageModel",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Judge Agent": {
+      "main": [
+        [
+          {
+            "node": "Parse Judge",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "OpenRouter Chat Model": {
+      "ai_languageModel": [
+        [
+          {
+            "node": "Judge Agent",
+            "type": "ai_languageModel",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Parse Judge": {
+      "main": [
+        [
+          {
+            "node": "Pass?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Pass?": {
+      "main": [
+        [
+          {
+            "node": "Final Result",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Writer Agent",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "pinData": {},
+  "settings": {
+    "executionOrder": "v1"
+  },
+  "active": false,
+  "meta": {
+    "templateCredsSetupCompleted": false
+  },
+  "tags": []
+}
